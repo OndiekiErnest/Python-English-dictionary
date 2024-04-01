@@ -25,11 +25,9 @@ class Dictionary:
         "case",
     )
 
-    def __init__(self, dictfile: str, words_case=str.lower):
+    def __init__(self, dictfile: str):
         # store filename for future ref
         self.dictfile = dictfile
-        # function to change word case
-        self.case = words_case
         # read dictfile on startup
         self._read_file()
 
@@ -44,13 +42,11 @@ class Dictionary:
     def search(self, word: str) -> str | None:
         """search the definition of word in dictionary"""
         # if definition is None; suggest a word that's close
-        word = self.case(word)
         if definition := self.word_definitions.get(word):
             return definition
 
     def suggest(self, word: str, **kwargs):
         """use difflib to suggest close words to word"""
-        word = self.case(word)
         matches = get_close_matches(word, self.words, **kwargs)
         return matches
 

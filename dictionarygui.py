@@ -3,6 +3,7 @@
 from PyQt6.QtWidgets import (
     QApplication,
     QWidget,
+    QMenu,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -12,11 +13,13 @@ from PyQt6.QtWidgets import (
     QFileDialog,
 )
 from dictionary import Dictionary
-from PyQt6.QtCore import Qt, QStringListModel
+from PyQt6.QtCore import Qt, QStringListModel, pyqtSignal, QSize
 from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QActionGroup, QAction
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ICONS_DIR = os.path.join(BASE_DIR, "data", "icons")
 
 
 class SuggestionsModel(QStringListModel):
@@ -45,13 +48,79 @@ class SuggestionsModel(QStringListModel):
         return super().data(index, role)
 
 
+class MatchModes(QMenu):
+    """custom QMenu: contains match mode actions and signals"""
+
+    case_changed = pyqtSignal(Qt.CaseSensitivity)
+    mode_changed = pyqtSignal(Qt.MatchFlag)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # action groups
+        action_group = QActionGroup(self)
+        action_group.setExclusive(True)
+        case_group = QActionGroup(self)
+        case_group.setExclusive(True)
+
+        # match actions
+        # starts with
+        match_startswith = QAction("Startswith", self)
+        match_startswith.setCheckable(True)
+        match_startswith.triggered.connect(
+            lambda: self.mode_changed.emit(Qt.MatchFlag.MatchStartsWith)
+        )
+        match_startswith.setChecked(True)
+        # contains
+        match_contains = QAction("Contains", self)
+        match_contains.setCheckable(True)
+        match_contains.triggered.connect(
+            lambda: self.mode_changed.emit(Qt.MatchFlag.MatchContains)
+        )
+        # ends with
+        match_endswith = QAction("Endswith", self)
+        match_endswith.setCheckable(True)
+        match_endswith.triggered.connect(
+            lambda: self.mode_changed.emit(Qt.MatchFlag.MatchEndsWith)
+        )
+        # case sensitive
+        match_case_sensitive = QAction("Case sensitive", self)
+        match_case_sensitive.setCheckable(True)
+        match_case_sensitive.triggered.connect(
+            lambda: self.case_changed.emit(Qt.CaseSensitivity.CaseSensitive)
+        )
+        # case insensitive
+        match_case_insensitive = QAction("Case insensitive", self)
+        match_case_insensitive.setCheckable(True)
+        match_case_insensitive.triggered.connect(
+            lambda: self.case_changed.emit(Qt.CaseSensitivity.CaseInsensitive)
+        )
+        match_case_insensitive.setChecked(True)
+
+        # add actions to action group
+        self.addAction(action_group.addAction(match_startswith))
+        self.addAction(action_group.addAction(match_contains))
+        self.addAction(action_group.addAction(match_endswith))
+        self.addSeparator()
+        self.addAction(case_group.addAction(match_case_sensitive))
+        self.addAction(case_group.addAction(match_case_insensitive))
+
+
+class LargerIconBtn(QPushButton):
+    """a QPushButton with a larger icon size"""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setIconSize(QSize(20, 20))
+
+
 class AppWindow(QWidget):
     """dictionary app window"""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # set window attrs
-        self.setWindowIcon(QIcon(os.path.join(BASE_DIR, "data", "icon.png")))
+        self.setWindowIcon(QIcon(os.path.join(ICONS_DIR, "icon.png")))
         self.setWindowTitle("Dict")
         self.setGeometry(0, 0, 350, 700)
         # window layout
@@ -59,14 +128,19 @@ class AppWindow(QWidget):
         # top layout
         toplayout = QHBoxLayout()
         toplayout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        # search area layout
+        search_layout = QHBoxLayout()
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        search_layout.setSpacing(1)
         # variables
         self.dictionary = Dictionary(os.path.join(BASE_DIR, "data", "data.json"))
         self.last_known_dir = os.path.expanduser(f"~{os.sep}Documents")
+        self.search_modes_menu = MatchModes(self)
         # widgets
         # change JSON button
-        self.filebtn = QPushButton("+Dictionary")
-        self.filebtn.setFixedWidth(115)
-        self.filebtn.setToolTip("Select new dictionary JSON file")
+        self.filebtn = LargerIconBtn()
+        self.filebtn.setIcon(QIcon(os.path.join(ICONS_DIR, "add.png")))
+        self.filebtn.setToolTip("Add new dictionary JSON file")
         self.filebtn.clicked.connect(self.change_json)
         # typing area
         self.edit = QLineEdit()
@@ -74,6 +148,18 @@ class AppWindow(QWidget):
         self.edit.setPlaceholderText("Text to Search")
         self.edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.edit.returnPressed.connect(self.get_definition)
+        # action
+        search_action = QAction(self.edit)
+        search_action.setIcon(QIcon(os.path.join(ICONS_DIR, "search.png")))
+        search_action.setToolTip("Search")
+        search_action.triggered.connect(self.get_definition)
+        self.edit.addAction(search_action, QLineEdit.ActionPosition.TrailingPosition)
+        # suggestion settings button
+        self.suggestions_settings = LargerIconBtn()
+        self.suggestions_settings.setIcon(QIcon(os.path.join(ICONS_DIR, "adjust.png")))
+        self.suggestions_settings.setMinimumHeight(50)
+        self.suggestions_settings.setToolTip("Adjust Suggestions")
+        self.suggestions_settings.clicked.connect(self.suggestions_settings_clicked)
         # results area
         self.results = QLabel()
         self.results.setWordWrap(True)
@@ -91,15 +177,21 @@ class AppWindow(QWidget):
         self.autocompleter = QCompleter()
         suggestion_model = SuggestionsModel(self.dictionary.words)
         self.autocompleter.setModel(suggestion_model)
-        # self.autocompleter.setFilterMode(Qt.MatchFlag.MatchContains)  # slow
-        self.autocompleter.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.autocompleter.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.autocompleter.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.autocompleter.setFilterMode(Qt.MatchFlag.MatchStartsWith)
+        self.autocompleter.popup().clicked.connect(self.get_definition)
+        # bind signals
+        self.search_modes_menu.case_changed.connect(self.change_casesensitivity)
+        self.search_modes_menu.mode_changed.connect(self.change_filtermode)
         # set completer
         self.edit.setCompleter(self.autocompleter)
         # add widgets to layout
         toplayout.addWidget(self.filebtn)
+        search_layout.addWidget(self.suggestions_settings)
+        search_layout.addWidget(self.edit)
         self.mainlayout.addLayout(toplayout)
-        self.mainlayout.addWidget(self.edit)
+        self.mainlayout.addLayout(search_layout)
         self.mainlayout.addWidget(self.results)
 
     def change_json(self):
@@ -133,13 +225,25 @@ class AppWindow(QWidget):
                 else:
                     self.results.setText("<i>No matching words</i>")
 
+    def change_filtermode(self, mode):
+        """change completer filter mode"""
+        self.autocompleter.setFilterMode(mode)
+
+    def change_casesensitivity(self, case):
+        """change completer case sensitivity"""
+        self.autocompleter.setCaseSensitivity(case)
+
+    def suggestions_settings_clicked(self):
+        """create and open pop-up menu with different filter modes"""
+        self.search_modes_menu.exec(self.mapToGlobal(self.suggestions_settings.pos()))
+
     def link_clicked(self, word: str):
         """
         handle clicked links;
         since href=word; set word to edit and get definition
         """
         self.edit.setText(word)
-        # self.get_definition()  # search word right away
+        self.get_definition()  # search word right away
 
 
 if __name__ == "__main__":
