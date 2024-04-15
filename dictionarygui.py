@@ -253,6 +253,12 @@ class AppWindow(QWidget):
                 else:
                     self.results.setText("<i>No matching words</i>")
 
+    def read_for_user(self):
+        """use tts to say the current word and its definition to the user"""
+        # TODO
+        to_say = f"{self.dictionary.current_word}: {self.dictionary.current_definition}"
+        print(to_say)
+
     def change_filtermode(self, mode):
         """change completer filter mode"""
         self.autocompleter.setFilterMode(mode)
