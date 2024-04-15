@@ -5,7 +5,7 @@ The JSON file can be changed any time in the application.
 
 
 # Installation on Windows
-Windows executable files can be downloaded from the 'Releases' section (at the bottom-right side).
+Windows executable files can be downloaded from the ['Releases'](https://github.com/OndiekiErnest/Python-English-dictionary/releases/) section.
 Download and install, and you are good to go!
 
 # Screenshots
