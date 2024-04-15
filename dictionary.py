@@ -24,11 +24,16 @@ class Dictionary:
         "dictfile",
         "words",
         "case",
+        "current_word",
+        "current_definition",
     )
 
     def __init__(self, dictfile: str):
         # store filename for future ref
         self.dictfile = dictfile
+        # initialize current word and definition
+        self.current_word = None
+        self.current_definition = None
         # read dictfile on startup
         self._read_file()
 
@@ -63,7 +68,11 @@ class Dictionary:
         # if definition is None; suggest a word that's close
         if definition := self.word_definitions.get(word):
             # definition can be list or str
-            return self._format_definition(definition)
+            f_definition = self._format_definition(definition)
+            # update current word and definition
+            self.current_word = word
+            self.current_definition = f_definition
+            return f_definition
 
     def suggest(self, word: str, **kwargs):
         """use difflib to suggest close words to word"""
