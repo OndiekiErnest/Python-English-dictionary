@@ -1,8 +1,11 @@
 # Python-English-dictionary
 English dictionary application.
+<br>
 Written in Python and uses English JSON files by default.
+<br>
 The JSON file can be changed any time in the application.
-
+<br>
+Think of it as an app that reads JSON files and allows you to search their keys and values.
 
 # Installation on Windows
 Windows executable files can be downloaded from the ['Releases'](https://github.com/OndiekiErnest/Python-English-dictionary/releases/) section.
