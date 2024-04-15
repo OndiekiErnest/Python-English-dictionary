@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
     QMenu,
     QLabel,
     QLineEdit,
+    QComboBox,
     QPushButton,
     QVBoxLayout,
     QHBoxLayout,
@@ -117,6 +118,9 @@ class LargerIconBtn(QPushButton):
 class AppWindow(QWidget):
     """dictionary app window"""
 
+    DEFAULT_FILE = os.path.join(BASE_DIR, "data", "default.json")
+    WEBSTER_FILE = os.path.join(BASE_DIR, "data", "webster.json")
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # set window attrs
@@ -128,20 +132,31 @@ class AppWindow(QWidget):
         # top layout
         toplayout = QHBoxLayout()
         toplayout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        toplayout.setContentsMargins(0, 0, 0, 0)
+        toplayout.setSpacing(1)
         # search area layout
         search_layout = QHBoxLayout()
         search_layout.setContentsMargins(0, 0, 0, 0)
         search_layout.setSpacing(1)
         # variables
-        self.dictionary = Dictionary(os.path.join(BASE_DIR, "data", "data.json"))
+        self.added_files = {
+            "Default Dictionary (English)": self.DEFAULT_FILE,
+            "Webster Dictionary (English)": self.WEBSTER_FILE,
+        }
+        self.dictionary = Dictionary(self.DEFAULT_FILE)
         self.last_known_dir = os.path.expanduser(f"~{os.sep}Documents")
         self.search_modes_menu = MatchModes(self)
         # widgets
         # change JSON button
         self.filebtn = LargerIconBtn()
+        self.filebtn.setMinimumHeight(35)
         self.filebtn.setIcon(QIcon(os.path.join(ICONS_DIR, "add.png")))
         self.filebtn.setToolTip("Add new dictionary JSON file")
-        self.filebtn.clicked.connect(self.change_json)
+        self.filebtn.clicked.connect(self.choose_json)
+        # file chooser dropdown menu
+        self.files_dropdown = QComboBox()
+        self.files_dropdown.addItems(self.added_files.keys())
+        self.files_dropdown.currentTextChanged.connect(self.change_json)
         # typing area
         self.edit = QLineEdit()
         self.edit.setMinimumHeight(50)
@@ -166,7 +181,7 @@ class AppWindow(QWidget):
         self.results.setMinimumHeight(100)
         self.results.linkActivated.connect(self.link_clicked)
         self.results.setAlignment(
-            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
         )
         # make text selectable and links clickable
         self.results.setTextInteractionFlags(
@@ -175,8 +190,9 @@ class AppWindow(QWidget):
         )
         # text auto-completion
         self.autocompleter = QCompleter()
-        suggestion_model = SuggestionsModel(self.dictionary.words)
-        self.autocompleter.setModel(suggestion_model)
+        self.autocompleter.setMaxVisibleItems(10)
+        self.suggestion_model = SuggestionsModel(self.dictionary.words)
+        self.autocompleter.setModel(self.suggestion_model)
         self.autocompleter.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
         self.autocompleter.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.autocompleter.setFilterMode(Qt.MatchFlag.MatchStartsWith)
@@ -188,14 +204,22 @@ class AppWindow(QWidget):
         self.edit.setCompleter(self.autocompleter)
         # add widgets to layout
         toplayout.addWidget(self.filebtn)
+        toplayout.addWidget(self.files_dropdown)
         search_layout.addWidget(self.suggestions_settings)
         search_layout.addWidget(self.edit)
         self.mainlayout.addLayout(toplayout)
         self.mainlayout.addLayout(search_layout)
         self.mainlayout.addWidget(self.results)
 
-    def change_json(self):
-        """open a file dialog to change dict JSON"""
+    def change_json(self, key: str):
+        """switch a dict JSON file from the added files"""
+        filename = self.added_files[key]
+        self.dictionary.change_file(filename)
+        # update the suggestions model data
+        self.suggestion_model.setStringList(self.dictionary.words)
+
+    def choose_json(self):
+        """open file dialog to choose a dict JSON file"""
         filename = os.path.normpath(
             QFileDialog.getOpenFileName(
                 self, "Select JSON file", self.last_known_dir, "JSON files (*.json)"
@@ -203,15 +227,19 @@ class AppWindow(QWidget):
         )
         if filename and filename != ".":
             self.last_known_dir = os.path.dirname(filename)
-            self.dictionary.change_file(filename)
+            name, _ = os.path.splitext(os.path.basename(filename))
+            # update record
+            self.added_files[name] = filename
+            self.files_dropdown.addItem(name)
+            # make the chosen file the current text;
+            # this will trigger change_json call
+            self.files_dropdown.setCurrentText(name)
 
     def get_definition(self):
         word = self.edit.text()
         if word:
             # get definitions
             if definitions := self.dictionary.search(word):
-                if isinstance(definitions, list):
-                    definitions = "\n".join((line for line in definitions))
                 self.results.setText(definitions)
             # if definitions is None
             else:

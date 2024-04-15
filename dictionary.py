@@ -12,6 +12,7 @@ Tip: use difflib library here
 
 # pip install orjson
 import orjson
+from re import split
 from difflib import get_close_matches
 
 
@@ -39,11 +40,30 @@ class Dictionary:
         # get words for suggestions
         self.words = list(self.word_definitions.keys())
 
+    def _format_definition(self, definitions):
+        """
+        format the definitions string/list;
+        use the 're' to replace numbered definitions with '\n'
+        """
+        if isinstance(definitions, str):
+            # try split numbered definitions
+            definitions = (
+                line for line in split(r"[ ]*\d{1,2}.[ ]+", definitions) if line
+            )
+        elif isinstance(definitions, dict):
+            definitions = (f"{k}: {v}" for k, v in definitions.items())
+        # format definitions
+        formatted_def = "".join(
+            (f"\n{index + 1}. {line}" for index, line in enumerate(definitions))
+        )
+        return formatted_def
+
     def search(self, word: str) -> str | None:
         """search the definition of word in dictionary"""
         # if definition is None; suggest a word that's close
         if definition := self.word_definitions.get(word):
-            return definition
+            # definition can be list or str
+            return self._format_definition(definition)
 
     def suggest(self, word: str, **kwargs):
         """use difflib to suggest close words to word"""
