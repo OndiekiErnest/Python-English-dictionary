@@ -289,5 +289,8 @@ if __name__ == "__main__":
 
     window = AppWindow()
     window.show()
+    # make the edit widget focused when window has opened
+    # start typing right away
+    window.edit.setFocus()
 
     sys.exit(app.exec())
