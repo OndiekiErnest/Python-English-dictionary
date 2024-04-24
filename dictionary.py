@@ -23,27 +23,36 @@ class Dictionary:
         "word_definitions",
         "dictfile",
         "words",
-        "case",
         "current_word",
         "current_definition",
     )
 
-    def __init__(self, dictfile: str):
+    def __init__(self):
         # store filename for future ref
-        self.dictfile = dictfile
+        self.dictfile = None
+        # empty words and definitions
+        self.word_definitions = {}
+        self.words = []
         # initialize current word and definition
         self.current_word = None
         self.current_definition = None
-        # read dictfile on startup
-        self._read_file()
 
-    def _read_file(self):
-        """read dictfile and update dictionary"""
-        with open(self.dictfile, "rb") as file:
-            # get words and definitions
-            self.word_definitions: dict = orjson.loads(file.read())
-        # get words for suggestions
-        self.words = list(self.word_definitions.keys())
+    def from_json(self, filename: str):
+        """
+        read dictfile and update dictionary at runtime;
+        return True on success, False otherwise
+        """
+        try:
+            with open(filename, "rb") as file:
+                # get words and definitions
+                self.word_definitions: dict = orjson.loads(file.read())
+            # get words for suggestions
+            self.words = list(self.word_definitions.keys())
+            # update file ref
+            self.dictfile = filename
+            return True
+        except Exception:  # File not found, or Permission errors
+            return False
 
     def _format_definition(self, definitions):
         """
@@ -78,8 +87,3 @@ class Dictionary:
         """use difflib to suggest close words to word"""
         matches = get_close_matches(word, self.words, **kwargs)
         return matches
-
-    def change_file(self, filename: str):
-        """change dictfile during runtime"""
-        self.dictfile = filename
-        self._read_file()
