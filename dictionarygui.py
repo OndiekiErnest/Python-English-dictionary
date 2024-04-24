@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QComboBox,
+    QScrollArea,
     QPushButton,
     QVBoxLayout,
     QHBoxLayout,
@@ -14,13 +15,49 @@ from PyQt6.QtWidgets import (
     QFileDialog,
 )
 from dictionary import Dictionary
-from PyQt6.QtCore import Qt, QStringListModel, pyqtSignal, QSize
-from PyQt6.QtGui import QIcon
-from PyQt6.QtGui import QActionGroup, QAction
+from PyQt6.QtCore import (
+    Qt,
+    QStringListModel,
+    pyqtSignal,
+    QSize,
+    QRunnable,
+    QObject,
+    QThreadPool,
+)
+from PyQt6.QtGui import QIcon, QActionGroup, QAction
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ICONS_DIR = os.path.join(BASE_DIR, "data", "icons")
+
+
+class FileReadSignals(QObject):
+    """signal to emit when a file is being read"""
+
+    reading_started = pyqtSignal()
+    reading_ended = pyqtSignal(bool)
+
+
+class FileReadWorker(QRunnable):
+    """
+    a runnable that reads the JSON files in the background;
+    to avoid freezing the window when reading big JSON files;
+    and emits signals to notify of major events;
+    takes an instance of Dictionary as the arg
+    """
+
+    def __init__(self, filename: str, dictionary: Dictionary):
+        super().__init__()
+        # variables
+        self.filename = filename
+        self.dictionary = dictionary
+        self.signals = FileReadSignals()
+
+    def run(self):
+        """read file using dictionary's methods"""
+        self.signals.reading_started.emit()
+        success = self.dictionary.from_json(self.filename)
+        self.signals.reading_ended.emit(success)
 
 
 class SuggestionsModel(QStringListModel):
@@ -115,6 +152,41 @@ class LargerIconBtn(QPushButton):
         self.setIconSize(QSize(20, 20))
 
 
+class ScrollableResults(QScrollArea):
+    """custom scroll area that holds results widget"""
+
+    # signal to emit word clicked on 'Did you mean'
+    link_clicked = pyqtSignal(str)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setWidgetResizable(True)  # results label can be resized
+        self.setFrameStyle(0)  # remove the frame around the scroll area
+
+        self.results_label = QLabel()
+        self.results_label.setWordWrap(True)
+        self.results_label.setMinimumHeight(100)
+        self.results_label.linkActivated.connect(self._on_link_clicked)
+        self.results_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        )
+        # make text selectable and links clickable
+        self.results_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.LinksAccessibleByMouse
+        )
+        # set widget to scroll
+        self.setWidget(self.results_label)
+
+    def setText(self, text: str):
+        """set results label text"""
+        self.results_label.setText(text)
+
+    def _on_link_clicked(self, word: str):
+        """emit the word clicked on 'Did you mean'"""
+        self.link_clicked.emit(word)
+
+
 class AppWindow(QWidget):
     """dictionary app window"""
 
@@ -126,7 +198,7 @@ class AppWindow(QWidget):
         # set window attrs
         self.setWindowIcon(QIcon(os.path.join(ICONS_DIR, "icon.png")))
         self.setWindowTitle("Dict")
-        self.setGeometry(0, 0, 350, 700)
+        self.setGeometry(0, 0, 370, 700)
         # window layout
         self.mainlayout = QVBoxLayout(self)
         # top layout
@@ -140,11 +212,16 @@ class AppWindow(QWidget):
         search_layout.setSpacing(1)
         # variables
         self.added_files = {
-            "Default Dictionary (English)": self.DEFAULT_FILE,
+            "Default Dictionary (English)": self.DEFAULT_FILE,  # this comes first in the dropdown
             "Webster Dictionary (English)": self.WEBSTER_FILE,
         }
-        self.dictionary = Dictionary(self.DEFAULT_FILE)
+        # thread manager
+        self.thread_pool = QThreadPool(self)
+        self.thread_pool.setMaxThreadCount(1)  # run one thread at a time
+        # dict
+        self.dictionary = Dictionary()
         self.last_known_dir = os.path.expanduser(f"~{os.sep}Documents")
+        # menu
         self.search_modes_menu = MatchModes(self)
         # widgets
         # change JSON button
@@ -156,7 +233,7 @@ class AppWindow(QWidget):
         # file chooser dropdown menu
         self.files_dropdown = QComboBox()
         self.files_dropdown.addItems(self.added_files.keys())
-        self.files_dropdown.currentTextChanged.connect(self.change_json)
+        self.files_dropdown.currentTextChanged.connect(self.read_json)
         # typing area
         self.edit = QLineEdit()
         self.edit.setMinimumHeight(50)
@@ -176,23 +253,16 @@ class AppWindow(QWidget):
         self.suggestions_settings.setToolTip("Adjust Suggestions")
         self.suggestions_settings.clicked.connect(self.suggestions_settings_clicked)
         # results area
-        self.results = QLabel()
-        self.results.setWordWrap(True)
-        self.results.setMinimumHeight(100)
-        self.results.linkActivated.connect(self.link_clicked)
-        self.results.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
-        )
-        # make text selectable and links clickable
-        self.results.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-            | Qt.TextInteractionFlag.LinksAccessibleByMouse
-        )
+        self.results = ScrollableResults()
+        self.results.link_clicked.connect(self.on_link_clicked)
+
         # text auto-completion
         self.autocompleter = QCompleter()
         self.autocompleter.setMaxVisibleItems(10)
-        self.suggestion_model = SuggestionsModel(self.dictionary.words)
+        # create suggestions model
+        self.suggestion_model = SuggestionsModel()
         self.autocompleter.setModel(self.suggestion_model)
+
         self.autocompleter.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
         self.autocompleter.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.autocompleter.setFilterMode(Qt.MatchFlag.MatchStartsWith)
@@ -205,18 +275,34 @@ class AppWindow(QWidget):
         # add widgets to layout
         toplayout.addWidget(self.filebtn)
         toplayout.addWidget(self.files_dropdown)
+
         search_layout.addWidget(self.suggestions_settings)
         search_layout.addWidget(self.edit)
+
         self.mainlayout.addLayout(toplayout)
         self.mainlayout.addLayout(search_layout)
         self.mainlayout.addWidget(self.results)
 
-    def change_json(self, key: str):
+        # open JSON in the background; this speeds up startup
+        self.read_json(self.files_dropdown.currentText())
+
+    def read_json(self, key: str):
         """switch a dict JSON file from the added files"""
         filename = self.added_files[key]
-        self.dictionary.change_file(filename)
-        # update the suggestions model data
-        self.suggestion_model.setStringList(self.dictionary.words)
+        # create runner/worker
+        worker = FileReadWorker(filename, self.dictionary)
+        # update the suggestions model when the file is read
+        worker.signals.reading_ended.connect(self._update_suggestions)
+        # enqueue/start worker
+        self.thread_pool.start(worker)
+
+    def _update_suggestions(self, successful: bool):
+        """
+        update the suggestions model data;
+        successful is True if the file was read successfully
+        """
+        if successful:
+            self.suggestion_model.setStringList(self.dictionary.words)
 
     def choose_json(self):
         """open file dialog to choose a dict JSON file"""
@@ -228,11 +314,11 @@ class AppWindow(QWidget):
         if filename and filename != ".":
             self.last_known_dir = os.path.dirname(filename)
             name, _ = os.path.splitext(os.path.basename(filename))
-            # update record
+            # update JSON files record
             self.added_files[name] = filename
             self.files_dropdown.addItem(name)
             # make the chosen file the current text;
-            # this will trigger change_json call
+            # this will trigger read_json call
             self.files_dropdown.setCurrentText(name)
 
     def get_definition(self):
@@ -271,7 +357,7 @@ class AppWindow(QWidget):
         """create and open pop-up menu with different filter modes"""
         self.search_modes_menu.exec(self.mapToGlobal(self.suggestions_settings.pos()))
 
-    def link_clicked(self, word: str):
+    def on_link_clicked(self, word: str):
         """
         handle clicked links;
         since href=word; set word to edit and get definition
@@ -284,7 +370,12 @@ if __name__ == "__main__":
     import sys
 
     app = QApplication(sys.argv)
-    app.setStyleSheet("QWidget{font:20px; color:#2d2e2e; background: white}")
+    app.setStyleSheet(
+        """
+        QWidget{font:20px; color:#2d2e2e; background: white}
+        QToolTip{background: white; padding: 3px;}
+        """
+    )
     app.setStyle("Fusion")
 
     window = AppWindow()
